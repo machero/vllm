@@ -10,17 +10,18 @@ clusters:
   • decode  (language-model inference)
 
 For MM input we:
-    1. Extract *every* image/audio item.
-    2. Fire N concurrent requests to the encoder cluster
-       (one request per item, with **all text removed**).
-    3. Wait for all of them to succeed.
-    4. Forward the *original* request to a decode server.
+    1. Send full original child requests to the encoder cluster with generation
+       limited to one token, so encoder cache is populated using the same
+       multimodal prompt context as decode.
+    2. Wait for all encoder requests to succeed.
+    3. Forward the *original* request to a decode server.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import logging
 import os
 import random
@@ -79,9 +80,10 @@ async def fanout_encoder_primer(
     req_id: str,
 ) -> None:
     """
-    1. Build one request *per MM item* with all text removed.
-    2. Send them concurrently to the encode cluster.
-    3. Raise if any of them fails.
+    1. Build one full-context request *per MM item*.
+    2. Restrict each request to one encoder input index.
+    3. Send them concurrently to the encode cluster.
+    4. Raise if any of them fails.
     """
     logger.info("[%s] Processing multimodal items...", req_id)
 
@@ -97,21 +99,20 @@ async def fanout_encoder_primer(
     # Round-robin over encode servers to distribute load a bit
     url_cycle = (e_urls[i % len(e_urls)] for i in range(len(mm_items)))
 
-    for idx, (item, target_url) in enumerate(zip(mm_items, url_cycle)):
+    for idx, target_url in enumerate(url_cycle):
         # Derive a *child* request id:  <parent>:<index>:<random-short>
         child_req_id = f"{req_id}:{idx}:{uuid.uuid4().hex[:6]}"
         headers = {"x-request-id": child_req_id}
 
-        encoder_req = {
-            # You *may* need to keep additional fields
-            "model": orig_request.get("model"),
-            "messages": [
-                {"role": "user", "content": [item]},
-            ],
-            # Only need 1 token so the server actually runs the encoder path
-            "max_tokens": 1,
-            "stream": False,
+        encoder_req = copy.deepcopy(orig_request)
+        encoder_req["ec_transfer_params"] = {
+            **encoder_req.get("ec_transfer_params", {}),
+            "encoder_input_ids": [idx],
         }
+        # Only need 1 token so the server actually runs the encoder path
+        encoder_req["max_tokens"] = 1
+        encoder_req["stream"] = False
+        encoder_req.pop("stream_options", None)
         tasks.append(
             encode_session.post(
                 f"{target_url}/v1/chat/completions",

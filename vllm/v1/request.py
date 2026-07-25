@@ -102,6 +102,7 @@ class Request:
         self.kv_transfer_params: dict[str, Any] | None = None
         # E/P/D: Connector-specific encoder-cache transfer parameters.
         self.ec_transfer_params: dict[str, Any] | None = None
+        self.encoder_input_ids: set[int] | None = None
 
         if pooling_params is not None:
             # Pooling models.
@@ -120,6 +121,18 @@ class Request:
                 self.ec_transfer_params = sampling_params.extra_args.get(
                     "ec_transfer_params"
                 )
+                if self.ec_transfer_params is not None:
+                    encoder_input_ids = self.ec_transfer_params.get("encoder_input_ids")
+                    if encoder_input_ids is not None:
+                        if not isinstance(encoder_input_ids, list) or any(
+                            not isinstance(input_id, int)
+                            for input_id in encoder_input_ids
+                        ):
+                            raise ValueError(
+                                "encoder_input_ids must be a list of multimodal "
+                                "feature indices"
+                            )
+                        self.encoder_input_ids = set(encoder_input_ids)
                 self.kv_cache_report_mode = sampling_params.extra_args.get(
                     "kv_cache_report_mode", "incremental"
                 )
@@ -170,6 +183,16 @@ class Request:
 
         # Multi-modal related
         self.mm_features = mm_features or []
+        if self.encoder_input_ids is not None:
+            if any(
+                not isinstance(input_id, int)
+                or input_id < 0
+                or input_id >= len(self.mm_features)
+                for input_id in self.encoder_input_ids
+            ):
+                raise ValueError(
+                    "encoder_input_ids must contain valid multimodal feature indices"
+                )
 
         # Read-only views
         # Prevent directly appending to these lists since

@@ -1424,6 +1424,12 @@ class Scheduler(SchedulerInterface):
             lo = 0
 
         for i in range(lo, hi):
+            if (
+                request.encoder_input_ids is not None
+                and i not in request.encoder_input_ids
+            ):
+                continue
+
             mm_feature = mm_features[i]
             start_pos = mm_feature.mm_position.offset
             num_encoder_tokens = mm_feature.mm_position.length

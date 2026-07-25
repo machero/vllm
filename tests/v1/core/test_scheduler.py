@@ -216,6 +216,50 @@ def test_schedule_multimodal_requests():
         assert len(encoder_input) == 1
 
 
+def test_schedule_multimodal_request_with_encoder_input_ids():
+    scheduler = create_scheduler(model="llava-hf/llava-1.5-7b-hf")
+    prompt_token_ids = list(range(300))
+    mm_features = [
+        MultiModalFeatureSpec(
+            data=MultiModalKwargsItem.dummy(),
+            modality="image",
+            identifier="shared-image",
+            mm_position=PlaceholderRange(offset=0, length=100),
+        ),
+        MultiModalFeatureSpec(
+            data=MultiModalKwargsItem.dummy(),
+            modality="image",
+            identifier="shared-image",
+            mm_position=PlaceholderRange(offset=100, length=100),
+        ),
+        MultiModalFeatureSpec(
+            data=MultiModalKwargsItem.dummy(),
+            modality="image",
+            identifier="image-2",
+            mm_position=PlaceholderRange(offset=200, length=100),
+        ),
+    ]
+    request = Request(
+        request_id="req",
+        prompt_token_ids=prompt_token_ids.copy(),
+        sampling_params=SamplingParams(
+            max_tokens=1,
+            extra_args={
+                "ec_transfer_params": {"encoder_input_ids": [1]},
+            },
+        ),
+        pooling_params=None,
+        mm_features=mm_features,
+    )
+
+    scheduler.add_request(request)
+    output = scheduler.schedule()
+
+    assert output.scheduled_encoder_inputs == {"req": [1]}
+    assert request.prompt_token_ids == prompt_token_ids
+    assert request.mm_features == mm_features
+
+
 def test_async_scheduling_pp_allows_rescheduling_with_output_placeholders():
     """Async scheduling + PP: allow multi-step in-flight scheduling per request"""
     scheduler = create_scheduler(async_scheduling=True, pipeline_parallel_size=2)
